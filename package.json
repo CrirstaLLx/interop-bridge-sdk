@@ -1,0 +1,38 @@
+{
+  "name": "interop-bridge-sdk",
+  "version": "1.0.0",
+  "description": "Cross-chain bridge SDK (Axelar + Wormhole and future protocols)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "blockchain",
+    "cross-chain",
+    "bridge",
+    "axelar",
+    "wormhole"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@axelar-network/axelarjs-sdk": "^0.19.1",
+    "@wormhole-foundation/sdk": "^4.14.1",
+    "ethers": "^6.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "dotenv": "^17.3.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
