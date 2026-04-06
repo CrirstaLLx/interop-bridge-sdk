@@ -1,18 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // index.ts  –  Public API of the bridge-sdk npm package
-//
-// Only export what consumers need.
-// Internal helpers (AxelarBridge, WormholeBridge, etc.) stay private.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Core SDK
 export { BridgeSDK } from "./sdk";
 
-// Adapters (consumers import these to register protocols)
+// Route selection
+export { RouteSelector } from "./RouteSelector";
+export type { RouteEstimate, RouteSelection } from "./RouteSelector";
+
+// Adapters
 export { AxelarAdapter }   from "./axelar/AxelarAdapter";
 export { WormholeAdapter } from "./wormhole/WormholeAdapter";
 
-// Types (consumers need these to type their TransferRequest / results)
+// Types
 export type {
   IBridgeAdapter,
   TransferRequest,
@@ -20,6 +21,6 @@ export type {
   TransferResult,
 } from "./types";
 
-// Adapter-specific extras (optional – only needed for typed extra fields)
+// Adapter-specific extras
 export type { AxelarExtra }   from "./axelar/AxelarAdapter";
 export type { WormholeExtra } from "./wormhole/WormholeAdapter";

@@ -1,86 +1,61 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // types.ts  –  Shared contracts for the Bridge SDK
-// Every protocol adapter must implement IBridgeAdapter.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ---------------------------------------------------------------------------
-// Unified transfer request – protocol-agnostic
-// ---------------------------------------------------------------------------
 export interface TransferRequest {
-  /** Chain name on the source side (e.g. "ethereum-sepolia", "Ethereum") */
   fromChain: string;
-
-  /** Chain name on the destination side (e.g. "avalanche", "Solana") */
-  toChain: string;
-
-  /** Token address or well-known symbol (e.g. "0xabc…" or "aUSDC") */
-  token: string;
-
-  /** Human-readable amount, e.g. "1.5" */
-  amount: string;
-
-  /** Token decimals – required so adapters can parse amounts correctly */
-  decimals: number;
-
-  /** Where tokens should land on the destination chain (defaults to sender) */
+  toChain:   string;
+  token:     string;
+  amount:    string;
+  decimals:  number;
   recipient?: string;
+  extra?:    Record<string, unknown>;
+}
+
+export interface ChainCost {
+  amount: string;
+  token:  string;
+  chain:  string;
+}
+
+export interface FeeEstimate {
+  protocol:  string;
 
   /**
-   * Protocol-specific extras.
-   * Axelar example:  { sourceContractAddress, destinationContractAddress, tokenSymbol, gasFee }
-   * Wormhole example: { protocol: "AutomaticTokenBridge", ensureWrapped: true }
+   * Total relay fee as a human-readable string.
+   * For ExecutorTokenBridge: quote.relayFee.amount — the "Amount Paid" on Wormholescan.
+   * For Axelar: relay fee from Axelar SDK.
    */
-  extra?: Record<string, unknown>;
-}
+  fee:       string;
+  feeToken:  string;
 
-// ---------------------------------------------------------------------------
-// Unified fee estimate result
-// ---------------------------------------------------------------------------
-export interface FeeEstimate {
-  /** Protocol that produced this estimate */
-  protocol: string;
+  /** Source chain gas cost (approve + initiateTransfer) */
+  sourceCost?:      ChainCost;
 
-  /** Fee amount as a human-readable string (e.g. "0.0012") */
-  fee: string;
+  /** Destination relay fee — for ExecutorTokenBridge this equals relayFee from quote */
+  destinationCost?: ChainCost;
 
-  /** Native token used to pay the fee (e.g. "ETH", "AVAX") */
-  feeToken: string;
+  // 🔥 ExecutorTokenBridge specific — from estimateMsgValueAndGasLimit()
+  executor?: {
+    /** msgValue from estimateMsgValueAndGasLimit() — paid to executor on source chain */
+    msgValue?: string;
+    /** gasLimit for destination execution */
+    gasLimit?: string;
+  };
 
-  /** Raw response from the underlying SDK – useful for debugging */
   raw?: unknown;
 }
 
-// ---------------------------------------------------------------------------
-// Unified transfer result
-// ---------------------------------------------------------------------------
 export interface TransferResult {
-  /** Protocol that executed the transfer */
-  protocol: string;
-
-  /** Transaction hash(es) on the source chain */
-  sourceTx: string | string[];
-
-  /** Transaction hash(es) on the destination chain (null for automatic relays) */
+  protocol:      string;
+  sourceTx:      string | string[];
   destinationTx?: string | string[] | null;
-
-  /** "automatic" = relayer completes it, "manual" = SDK completed it */
-  mode: "automatic" | "manual";
-
-  /** Raw response from the underlying SDK */
-  raw?: unknown;
+  mode:          "automatic" | "manual";
+  raw?:          unknown;
 }
 
-// ---------------------------------------------------------------------------
-// The interface every adapter MUST implement
-// Adding a new protocol = implementing this interface, nothing else changes.
-// ---------------------------------------------------------------------------
 export interface IBridgeAdapter {
-  /** Human-readable protocol name, e.g. "axelar" or "wormhole" */
   readonly protocolName: string;
-
-  /** Estimate cross-chain fee without sending a transaction */
   estimateFee(req: TransferRequest): Promise<FeeEstimate>;
-
-  /** Execute a cross-chain token transfer */
   transfer(req: TransferRequest): Promise<TransferResult>;
 }
