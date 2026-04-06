@@ -1,161 +1,130 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// test/axelar-integration.ts
+// test-axelar.ts
 //
-// Real transaction test: Sepolia → OP Sepolia via Axelar
+// Test: Axelar GMP transfer
+//   Ethereum Sepolia → Optimism Sepolia | 0.01 aUSDC
 //
-// Run:  npx ts-node test/axelar-integration.ts
+// Run: npx ts-node test-axelar.ts
+// Env: PRIVATE_KEY=0x...
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ethers } from "ethers";
 import * as dotenv from "dotenv";
 dotenv.config();
 
+import { ethers } from "ethers";
 import { BridgeSDK } from "../src/sdk";
 import { AxelarAdapter } from "../src/axelar/AxelarAdapter";
-import { TransferRequest } from "../src/types";
+import { getChain, getAxelarUsdcAddress, toAxelarName } from "../src/chains";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const CONFIG = {
-  rpcUrl:    "https://ethereum-sepolia-rpc.publicnode.com",
+const FROM_CHAIN = "ethereum-sepolia";
+const TO_CHAIN   = "optimism-sepolia";
+const AMOUNT     = "0.01";
+const DECIMALS   = 6;
 
-  // Your deployed contracts
-  sourceContract: "0xAe809E3bbC80090920aAb24675702932619DCf2e",  // Sepolia
-  destContract:   "0xE816791A620506c6A1da03b491221e2E89dd528e",  // OP Sepolia
+const RPC_URL    = "https://ethereum-sepolia-rpc.publicnode.com"; // alebo Infura/Alchemy
+const PRIVATE_KEY = process.env.PRIVATE_KEY!;
 
-  // aUSDC on Sepolia (official Axelar testnet address)
-  aUSDC_ADDRESS: "0x254d06f33bDc5b8ee05b2ea472107E300226659A",
-
-  AMOUNT:   "0.1",  // how much aUSDC to send
-  DECIMALS: 6,
-};
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function requireEnv(key: string): string {
-  const val = process.env[key];
-  if (!val) throw new Error(`Missing .env variable: ${key}`);
-  return val;
-}
-
-function separator(label: string) {
-  console.log("\n" + "─".repeat(60));
-  console.log(`  ${label}`);
-  console.log("─".repeat(60));
+if (!PRIVATE_KEY) {
+  throw new Error("PRIVATE_KEY chýba v .env");
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
-  separator("🔧  Setup");
+  console.log("=== TEST: Axelar Transfer ===");
+  console.log(`Route: ${FROM_CHAIN} → ${TO_CHAIN}`);
+  console.log(`Amount: ${AMOUNT} aUSDC\n`);
 
-  const privateKey = requireEnv("PRIVATE_KEY");
-  const provider   = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
-  const signer     = new ethers.Wallet(privateKey, provider);
-  const address    = await signer.getAddress();
+  // 1. Signer na source chain
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  const signer   = new ethers.Wallet(PRIVATE_KEY, provider);
 
-  console.log("Wallet address :", address);
-  console.log("Source chain   : ethereum-sepolia");
-  console.log("Dest chain     : arbitrum-sepolia");
+  console.log(`Wallet: ${await signer.getAddress()}`);
+  const balance = await provider.getBalance(signer.address);
+  console.log(`ETH balance: ${ethers.formatEther(balance)} ETH\n`);
 
-  // ── ETH balance check ──────────────────────────────────────────────────────
-  separator("💰  Balances");
+  // 2. Načítaj info z chains.ts
+  const fromInfo = getChain(FROM_CHAIN)!;
+  const toInfo   = getChain(TO_CHAIN)!;
 
-  const ethBalance = await provider.getBalance(address);
-  console.log("ETH balance    :", ethers.formatEther(ethBalance), "ETH");
+  const sourceContract = fromInfo.axelarContracts?.contractAddress;
+  const destContract   = toInfo.axelarContracts?.contractAddress;
+  const tokenAddress   = getAxelarUsdcAddress(FROM_CHAIN);
+  const axelarFrom     = toAxelarName(FROM_CHAIN)!;
+  const axelarTo       = toAxelarName(TO_CHAIN)!;
 
-  if (ethBalance < ethers.parseEther("0.005")) {
-    throw new Error(
-      "Not enough ETH for gas! Get testnet ETH from https://sepoliafaucet.com"
-    );
+  if (!sourceContract || !destContract || !tokenAddress) {
+    throw new Error("Chýbajú contract adresy alebo token adresa v chains.ts");
   }
 
-  // ── aUSDC balance check ────────────────────────────────────────────────────
-  const sdk = new BridgeSDK().register("axelar", new AxelarAdapter(signer));
+  console.log(`Source contract : ${sourceContract}`);
+  console.log(`Dest contract   : ${destContract}`);
+  console.log(`aUSDC address   : ${tokenAddress}`);
+  console.log(`Axelar from     : ${axelarFrom}`);
+  console.log(`Axelar to       : ${axelarTo}\n`);
 
-  const balanceResult = await sdk.use("axelar");
+  // 3. Setup SDK + Adapter
+  const sdk     = new BridgeSDK();
+  const adapter = new AxelarAdapter(signer);
+  sdk.register("axelar", adapter);
 
-  // Direct balance check via AxelarAdapter's underlying bridge
-  const tokenContract = new ethers.Contract(
-    CONFIG.aUSDC_ADDRESS,
-    ["function balanceOf(address) view returns (uint256)"],
-    signer
-  );
-  const rawBalance = await tokenContract.balanceOf(address);
-  const formattedBalance = ethers.formatUnits(rawBalance, CONFIG.DECIMALS);
-  console.log("aUSDC balance  :", formattedBalance, "aUSDC");
-
-  if (rawBalance < ethers.parseUnits(CONFIG.AMOUNT, CONFIG.DECIMALS)) {
-    throw new Error(
-      `Not enough aUSDC! You have ${formattedBalance}, need ${CONFIG.AMOUNT}.\n` +
-      "Get testnet aUSDC from: https://faucet.circle.com or Axelar Discord faucet"
-    );
-  }
-
-  // ── Build TransferRequest ──────────────────────────────────────────────────
-  separator("📋  Transfer request");
-
-  const req: TransferRequest = {
-    fromChain: "ethereum-sepolia",
-    toChain:   "arbitrum-sepolia",
-    token:     CONFIG.aUSDC_ADDRESS,
-    amount:    CONFIG.AMOUNT,
-    decimals:  CONFIG.DECIMALS,
+  // 4. Estimácia gas fee
+  console.log("── Krok 1: Estimácia Axelar fee ──");
+  const feeEstimate = await sdk.use("axelar").estimateFee({
+    fromChain: axelarFrom,
+    toChain:   axelarTo,
+    token:     tokenAddress,
+    amount:    AMOUNT,
+    decimals:  DECIMALS,
     extra: {
-      sourceContractAddress:      CONFIG.sourceContract,
-      destinationContractAddress: CONFIG.destContract,
+      sourceContractAddress:      sourceContract,
+      destinationContractAddress: destContract,
       tokenSymbol:                "aUSDC",
-      tokenAddress:               CONFIG.aUSDC_ADDRESS, // for auto-approve
-      gasFee:                     "0",                  // will be filled after estimate
+      gasFee:                     "0",  // placeholder pre estimáciu
     },
-  };
+  });
 
-  console.log("From    :", req.fromChain);
-  console.log("To      :", req.toChain);
-  console.log("Token   : aUSDC");
-  console.log("Amount  :", req.amount);
+  const gasFee = feeEstimate.fee ?? "0.005"; // fallback ak estimácia vráti "unknown"
+  console.log(`Odhadovaný gas fee : ${gasFee} ${feeEstimate.feeToken}\n`);
 
-  // ── Step 1: Estimate fee ───────────────────────────────────────────────────
-  separator("⛽  Step 1 — Estimate fee");
+  // 5. Skontroluj aUSDC balance
+  console.log("── Krok 2: Kontrola aUSDC balance ──");
+  const { AxelarBridge } = await import("../src/axelar/AxelarBridge");
+  const bridge = new AxelarBridge(signer);
+  const bal = await bridge.getBalance({ tokenAddress, decimals: DECIMALS });
+  console.log(`aUSDC balance: ${bal.formatted} aUSDC`);
 
-  const feeEstimate = await sdk.use("axelar").estimateFee(req);
-  console.log("Fee     :", feeEstimate.fee, feeEstimate.feeToken);
-  console.log("Raw     :", JSON.stringify(feeEstimate.raw, null, 2));
-
-  if (!feeEstimate.fee || feeEstimate.fee === "unknown") {
-    throw new Error("Could not estimate fee — check chain names and contract addresses");
+  if (parseFloat(bal.formatted ?? "0") < parseFloat(AMOUNT)) {
+    console.warn(`⚠️  Nedostatočný aUSDC balance (${bal.formatted}). Transfer sa pravdepodobne zlyhá.`);
+    console.warn(`   Získaj testnet aUSDC na: https://faucet.circle.com/ (vyber Sepolia)\n`);
   }
 
-  // Add 20% buffer on top of estimated fee
-  const feeWithBuffer = (parseFloat(feeEstimate.fee) * 1.2).toFixed(6);
-  console.log("Fee + 20% buffer:", feeWithBuffer, "ETH");
+  // 6. Presnej transfer
+  console.log("── Krok 3: Spustenie transferu ──");
+  const result = await sdk.transfer("axelar", {
+    fromChain: axelarFrom,
+    toChain:   axelarTo,
+    token:     tokenAddress,
+    amount:    AMOUNT,
+    decimals:  DECIMALS,
+    extra: {
+      sourceContractAddress:      sourceContract,
+      destinationContractAddress: destContract,
+      tokenSymbol:                "aUSDC",
+      tokenAddress,
+      gasFee,
+    },
+  });
 
-  // Inject real fee into request
-  (req.extra as any).gasFee = feeWithBuffer;
-
-  // ── Step 2: Execute transfer ───────────────────────────────────────────────
-  separator("🚀  Step 2 — Execute transfer");
-
-  console.log("Sending transaction...");
-  const result = await sdk.transfer("axelar", req);
-
-  console.log("\n✅  Transaction sent!");
-  console.log("Protocol   :", result.protocol);
-  console.log("Source TX  :", result.sourceTx);
-  console.log("Mode       :", result.mode);
-
-  // ── Step 3: Track on Axelarscan ───────────────────────────────────────────
-  separator("🔍  Step 3 — Track transaction");
-
-  const txHash = Array.isArray(result.sourceTx) ? result.sourceTx[0] : result.sourceTx;
-  console.log("Track your transaction on Axelarscan:");
-  console.log(`https://testnet.axelarscan.io/gmp/${txHash}`);
-  console.log("\nIt takes ~2-5 minutes for the cross-chain relay to complete.");
-
-  separator("✅  Done");
+  console.log("\n✅ Transfer odoslaný!");
+  console.log(`Source TX  : ${result.sourceTx}`);
+  console.log(`Mode       : ${result.mode}`);
+  console.log(`\nAxelarscan : https://testnet.axelarscan.io/gmp/${result.sourceTx}`);
 }
 
 main().catch((err) => {
-  console.error("\n❌  Error:", err.message ?? err);
+  console.error("\n❌ Chyba:", err.message ?? err);
   process.exit(1);
 });
