@@ -1,5 +1,6 @@
 import { AxelarQueryAPI, Environment } from "@axelar-network/axelarjs-sdk";
 import { ethers } from "ethers";
+import { getNativeToken, getChain } from "../chains";
 
 export interface EstimateAxelarFeeParams {
   sourceChain: string;
@@ -17,36 +18,9 @@ export interface EstimateAxelarFeeParams {
   executeData?: string;
 }
 
-const GAS_TOKENS: Record<string, string> = {
-  "ethereum-sepolia": "ETH",
-  "optimism-sepolia": "ETH",
-  "arbitrum-sepolia": "ETH",
-  "polygon-sepolia": "MATIC",
-  "base-sepolia": "ETH",
-  "linea-sepolia": "ETH",
-  "blast-sepolia": "ETH",
-  "mantle-sepolia": "MNT",
-  "Avalanche": "AVAX",
-  "binance": "BNB",
-  "Fantom": "FTM",
-  "celo-sepolia": "CELO",
-  "filecoin-2": "FIL",
-  "kava": "KAVA"
-};
-
-const L2_CHAINS = [
-  "arbitrum-sepolia",
-  "optimism-sepolia",
-  "base-sepolia",
-  "scroll",
-  "linea-sepolia",
-  "blast-sepolia",
-  "mantle-sepolia",
-  "fraxtal"
-];
-
+// Derives from chains.ts — no local duplicate needed
 function isL2(chain: string): boolean {
-  return L2_CHAINS.includes(chain.toLowerCase());
+  return getChain(chain)?.isL2 === true;
 }
 
 export async function estimateAxelarFee(
@@ -73,11 +47,11 @@ export async function estimateAxelarFee(
     gasMultiplier = 1.2
   } = params;
 
-  // AUTO GAS TOKEN
-  const resolvedGasToken =
-    params.gasToken || GAS_TOKENS[sourceChain] || "ETH";
+  // Resolve gas token from chains.ts — falls back to "ETH" if unknown.
+  // Caller can override via params.gasToken.
+  const resolvedGasToken = params.gasToken || getNativeToken(sourceChain);
 
-  // AUTO EXECUTE DATA
+  // L2 destinations need non-empty executeData for accurate fee estimation
   const resolvedExecuteData =
     params.executeData !== undefined
       ? params.executeData
@@ -111,17 +85,17 @@ export async function estimateAxelarFee(
       BigInt(feeResponse.l1ExecutionFeeWithMultiplier || 0);
 
     return {
-      raw: feeResponse,
-      totalWei: total.toString(),
-      totalEth: ethers.formatEther(total),
-      usedGasToken: resolvedGasToken,
-      isDestinationL2: isL2(destinationChain)
+      raw:             feeResponse,
+      totalWei:        total.toString(),
+      totalEth:        ethers.formatEther(total),
+      usedGasToken:    resolvedGasToken,
+      isDestinationL2: isL2(destinationChain),
     };
   }
 
   return {
-    raw: feeResponse,
-    usedGasToken: resolvedGasToken,
-    isDestinationL2: isL2(destinationChain)
+    raw:             feeResponse,
+    usedGasToken:    resolvedGasToken,
+    isDestinationL2: isL2(destinationChain),
   };
 }

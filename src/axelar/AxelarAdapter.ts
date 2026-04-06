@@ -23,10 +23,18 @@ export interface AxelarExtra {
   tokenSymbol: string;
 
   /**
-   * Gas fee in ETH to attach to the transaction (e.g. "0.01").
+   * Gas fee in native token to attach to the transaction (e.g. "0.01").
    * Use AxelarBridge.estimateFee() first to get the right value.
    */
   gasFee: string;
+
+  /**
+   * aUSDC contract address on the source chain.
+   * Used for the approve() step before transfer.
+   * Automatically injected by RouteSelector from chains.ts — only needed
+   * when calling AxelarAdapter directly without RouteSelector.
+   */
+  tokenAddress?: string;
 
   /**
    * Optional list of recipient addresses on the destination chain.
@@ -41,6 +49,10 @@ export interface AxelarExtra {
 export class AxelarAdapter implements IBridgeAdapter {
   readonly protocolName = "axelar";
 
+  // Memoized — created once on first access, reused for all subsequent calls.
+  // AxelarBridge is stateless so a single instance per signer is safe.
+  private _bridge?: AxelarBridge;
+
   /**
    * @param signer  ethers.Signer connected to the source network
    */
@@ -48,9 +60,8 @@ export class AxelarAdapter implements IBridgeAdapter {
 
   // ── private helpers ────────────────────────────────────────────────────────
 
-  /** Lazily create the bridge (no async constructor needed) */
   private get bridge(): AxelarBridge {
-    return new AxelarBridge(this.signer);
+    return (this._bridge ??= new AxelarBridge(this.signer));
   }
 
   private requireExtra(req: TransferRequest): AxelarExtra {
@@ -93,9 +104,10 @@ export class AxelarAdapter implements IBridgeAdapter {
   async transfer(req: TransferRequest): Promise<TransferResult> {
     const extra = this.requireExtra(req);
 
-    // Step 1 – approve token spend if needed
-    // tokenAddress must be provided via extra for the approval step
-    const tokenAddress = req.extra?.tokenAddress as string | undefined;
+    // Step 1 – approve token spend if needed.
+    // tokenAddress comes from extra (auto-injected by RouteSelector from chains.ts,
+    // or supplied manually when calling AxelarAdapter directly).
+    const tokenAddress = extra.tokenAddress;
     if (tokenAddress) {
       await this.bridge.approve({
         tokenAddress,
@@ -119,11 +131,11 @@ export class AxelarAdapter implements IBridgeAdapter {
     });
 
     return {
-      protocol:       this.protocolName,
-      sourceTx:       result.txHash,
-      destinationTx:  null,   // Axelar relayer completes delivery automatically
-      mode:           "automatic",
-      raw:            result,
+      protocol:      this.protocolName,
+      sourceTx:      result.txHash,
+      destinationTx: null,   // Axelar relayer completes delivery automatically
+      mode:          "automatic",
+      raw:           result,
     };
   }
 }
