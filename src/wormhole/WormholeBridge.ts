@@ -1,5 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // wormhole/WormholeBridge.ts
+//
+// Supported protocols:
+//   TokenBridge          — manual, user pays gas on both chains (no fee estimate)
+//   AutomaticTokenBridge — relayer pays destination (mainnet only)
+//   ExecutorTokenBridge  — executor pays destination, precise fee estimate available
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -22,13 +27,21 @@ import { attestToken } from "./attestation";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TransferParams {
-  from:          Chain;
-  to:            Chain;
-  token:         string;
-  amount:        string;
-  privateKey:    string;   // ← injected by caller, never read from .env
-  protocol?:     "TokenBridge" | "AutomaticTokenBridge";
+  from:           Chain;
+  to:             Chain;
+  token:          string;
+  amount:         string;
+  privateKey:     string;
+  protocol?:      "TokenBridge" | "AutomaticTokenBridge" | "ExecutorTokenBridge";
   ensureWrapped?: boolean;
+}
+
+export interface ExecutorEstimate {
+  msgValue:      bigint;
+  gasLimit:      bigint;
+  executorQuote: unknown;
+  relayFeeWei:   bigint;
+  quote:         unknown;
 }
 
 // ── WormholeBridge ────────────────────────────────────────────────────────────
@@ -50,49 +63,94 @@ export class WormholeBridge {
     }
   }
 
-  // ── Internal helpers ───────────────────────────────────────────────────────
-
-  private async buildTransfer(
-    params:             TransferParams,
-    sourceAddress:      any,
-    destinationAddress: any
-  ) {
-    const origChain = this.wh.getChain(params.from);
-    const tokenId: TokenId = Wormhole.tokenId(params.from, params.token);
-    const decimals = await getTokenDecimals(this.wh, tokenId, origChain);
-
-    const transferAmount = amount.units(amount.parse(params.amount, decimals));
-    const protocol = params.protocol ?? "TokenBridge";
-
-    let xfer: TokenTransfer<"Testnet">;
-
-    if (protocol === "TokenBridge") {
-      xfer = await this.wh.tokenTransfer(
-        tokenId, transferAmount, sourceAddress, destinationAddress, "TokenBridge"
-      );
-    } else if (protocol === "AutomaticTokenBridge") {
-      xfer = await this.wh.tokenTransfer(
-        tokenId, transferAmount, sourceAddress, destinationAddress, "AutomaticTokenBridge"
-      );
-    } else {
-      throw new Error(`[WormholeBridge] Unsupported protocol: ${protocol}`);
-    }
-
-    return { xfer, tokenId, decimals, transferAmount, protocol };
-  }
-
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  async estimate(params: TransferParams) {
+  /**
+   * Estimate fee for a transfer.
+   *
+   * ExecutorTokenBridge:
+   *   Uses estimateMsgValueAndGasLimit() on the destination chain for a
+   *   precise on-chain fee quote. Returns relay fee in source native token.
+   *
+   * TokenBridge / AutomaticTokenBridge:
+   *   Falls back to quoteTransfer() — relay fee is 0 for TokenBridge,
+   *   and a relay fee for AutomaticTokenBridge (mainnet only).
+   */
+  async estimate(params: TransferParams): Promise<ExecutorEstimate | unknown> {
     this.ensureInitialized();
 
     const origChain = this.wh.getChain(params.from);
     const destChain = this.wh.getChain(params.to);
+    const protocol  = params.protocol ?? "ExecutorTokenBridge";
 
     const source      = await getSigner(origChain, params.privateKey);
     const destination = await getSigner(destChain, params.privateKey);
 
-    const { xfer } = await this.buildTransfer(params, source.address, destination.address);
+    const tokenId: TokenId = Wormhole.tokenId(params.from, params.token);
+    const decimals          = await getTokenDecimals(this.wh, tokenId, origChain);
+    const transferAmount    = amount.units(amount.parse(params.amount, decimals));
+
+    if (protocol === "ExecutorTokenBridge") {
+      // Build ExecutorTokenBridge transfer object
+      const xfer = await this.wh.tokenTransfer(
+        tokenId,
+        transferAmount,
+        source.address,
+        destination.address,
+        "ExecutorTokenBridge"
+      );
+
+      // Get precise destination gas estimate from executor contract
+      const dstTb    = await destChain.getExecutorTokenBridge();
+      const dstToken = await TokenTransfer.lookupDestinationToken(
+        origChain,
+        destChain,
+        tokenId
+      );
+
+      const { msgValue, gasLimit } = await dstTb.estimateMsgValueAndGasLimit(dstToken);
+
+      console.log(`[WormholeBridge] ExecutorTokenBridge gas estimate:`);
+      console.log(`  msgValue : ${msgValue} wei`);
+      console.log(`  gasLimit : ${gasLimit}`);
+
+      // Build transfer details with gas params for full quote
+      const execDetails = {
+        token:    xfer.transfer.token,
+        amount:   xfer.transfer.amount,
+        from:     xfer.transfer.from,
+        to:       xfer.transfer.to,
+        protocol: "ExecutorTokenBridge" as const,
+        msgValue,
+        gasLimit,
+      };
+
+      const quote = await TokenTransfer.quoteTransfer(
+        this.wh,
+        origChain,
+        destChain,
+        execDetails
+      );
+
+      const relayFeeWei: bigint = (quote as any)?.relayFee?.amount ?? BigInt(0);
+
+      return {
+        msgValue,
+        gasLimit,
+        executorQuote: (quote as any)?.details?.executorQuote ?? null,
+        relayFeeWei,
+        quote,
+      } satisfies ExecutorEstimate;
+    }
+
+    // TokenBridge / AutomaticTokenBridge fallback
+    const xfer = await this.wh.tokenTransfer(
+      tokenId,
+      transferAmount,
+      source.address,
+      destination.address,
+      protocol as any
+    );
 
     return TokenTransfer.quoteTransfer(
       this.wh,
@@ -102,18 +160,35 @@ export class WormholeBridge {
     );
   }
 
+  /**
+   * Execute a cross-chain token transfer.
+   *
+   * ExecutorTokenBridge:
+   *   Estimates gas, attaches executorQuote, initiates transfer.
+   *   Executor handles destination automatically — mode: "automatic".
+   *
+   * TokenBridge:
+   *   Initiates transfer, waits for VAA, completes on destination.
+   *   mode: "manual".
+   *
+   * AutomaticTokenBridge:
+   *   Initiates transfer, relayer handles destination.
+   *   mode: "automatic".
+   */
   async transfer(params: TransferParams) {
     this.ensureInitialized();
 
     const origChain = this.wh.getChain(params.from);
     const destChain = this.wh.getChain(params.to);
+    const protocol  = params.protocol ?? "ExecutorTokenBridge";
 
     const source      = await getSigner(origChain, params.privateKey);
     const destination = await getSigner(destChain, params.privateKey);
 
     // ── Balance check ──────────────────────────────────────────────────────
     const tokenId: TokenId = Wormhole.tokenId(params.from, params.token);
-    const decimals = await getTokenDecimals(this.wh, tokenId, origChain);
+    const decimals          = await getTokenDecimals(this.wh, tokenId, origChain);
+    const transferAmount    = amount.units(amount.parse(params.amount, decimals));
 
     const sourceTokenBalance = await origChain.getBalance(
       source.signer.address(),
@@ -124,8 +199,6 @@ export class WormholeBridge {
       throw new Error("[WormholeBridge] Failed to get source token balance");
     }
 
-    const transferAmount = amount.units(amount.parse(params.amount, decimals));
-
     if (sourceTokenBalance < transferAmount) {
       throw new Error(
         `[WormholeBridge] Insufficient balance. ` +
@@ -133,8 +206,8 @@ export class WormholeBridge {
       );
     }
 
-    // ── Auto-attestation if token not wrapped on destination ───────────────
-    if (params.ensureWrapped !== false) {
+    // ── Auto-attestation (TokenBridge only) ───────────────────────────────
+    if (protocol === "TokenBridge" && params.ensureWrapped !== false) {
       const tbDest = await destChain.getTokenBridge();
       try {
         await tbDest.getWrappedAsset(tokenId);
@@ -145,35 +218,103 @@ export class WormholeBridge {
       }
     }
 
-    // ── Build and initiate transfer ────────────────────────────────────────
-    const { xfer, protocol } = await this.buildTransfer(
-      params,
-      source.address,
-      destination.address
-    );
+    // ── ExecutorTokenBridge ────────────────────────────────────────────────
+    if (protocol === "ExecutorTokenBridge") {
+      const xfer = await this.wh.tokenTransfer(
+        tokenId,
+        transferAmount,
+        source.address,
+        destination.address,
+        "ExecutorTokenBridge"
+      );
 
-    const quote = await TokenTransfer.quoteTransfer(
-      this.wh,
-      origChain,
-      destChain,
-      xfer.transfer as any
-    );
+      // Get precise destination gas estimate
+      const dstTb    = await destChain.getExecutorTokenBridge();
+      const dstToken = await TokenTransfer.lookupDestinationToken(
+        origChain,
+        destChain,
+        tokenId
+      );
+      const { msgValue, gasLimit } = await dstTb.estimateMsgValueAndGasLimit(dstToken);
 
-    const srcTxids = await xfer.initiateTransfer(source.signer);
+      // Build quote with gas params and attach executorQuote
+      const execDetails = {
+        token:    xfer.transfer.token,
+        amount:   xfer.transfer.amount,
+        from:     xfer.transfer.from,
+        to:       xfer.transfer.to,
+        protocol: "ExecutorTokenBridge" as const,
+        msgValue,
+        gasLimit,
+      };
 
-    // AutomaticTokenBridge — relayer completes destination, return immediately
-    if (protocol === "AutomaticTokenBridge") {
-      return { sourceTx: srcTxids, destinationTx: null, quote, mode: "automatic" as const };
+      const quote = await TokenTransfer.quoteTransfer(
+        this.wh,
+        origChain,
+        destChain,
+        execDetails
+      );
+
+      // Attach executorQuote — required for initiateTransfer to work
+      (xfer.transfer as any).executorQuote = (quote as any)?.details?.executorQuote;
+
+      const srcTxids = await xfer.initiateTransfer(source.signer);
+
+      return {
+        sourceTx:      srcTxids,
+        destinationTx: null,  // executor handles destination automatically
+        quote,
+        mode:          "automatic" as const,
+      };
     }
 
-    // TokenBridge — wait for VAA then complete transfer on destination
+    // ── AutomaticTokenBridge ───────────────────────────────────────────────
+    if (protocol === "AutomaticTokenBridge") {
+      const xfer = await this.wh.tokenTransfer(
+        tokenId,
+        transferAmount,
+        source.address,
+        destination.address,
+        "AutomaticTokenBridge"
+      );
+
+      const quote    = await TokenTransfer.quoteTransfer(this.wh, origChain, destChain, xfer.transfer as any);
+      const srcTxids = await xfer.initiateTransfer(source.signer);
+
+      return {
+        sourceTx:      srcTxids,
+        destinationTx: null,
+        quote,
+        mode:          "automatic" as const,
+      };
+    }
+
+    // ── TokenBridge (manual) ───────────────────────────────────────────────
+    const xfer = await this.wh.tokenTransfer(
+      tokenId,
+      transferAmount,
+      source.address,
+      destination.address,
+      "TokenBridge"
+    );
+
+    const quote    = await TokenTransfer.quoteTransfer(this.wh, origChain, destChain, xfer.transfer as any);
+    const srcTxids = await xfer.initiateTransfer(source.signer);
+
     await xfer.fetchAttestation(30 * 60 * 1000);
     const destTxids = await xfer.completeTransfer(destination.signer);
 
-    return { sourceTx: srcTxids, destinationTx: destTxids, quote, mode: "manual" as const };
+    return {
+      sourceTx:      srcTxids,
+      destinationTx: destTxids,
+      quote,
+      mode:          "manual" as const,
+    };
   }
 
-  async ensureWrappedToken(params: Pick<TransferParams, "from" | "to" | "token" | "privateKey">) {
+  async ensureWrappedToken(
+    params: Pick<TransferParams, "from" | "to" | "token" | "privateKey">
+  ) {
     this.ensureInitialized();
 
     const origChain = this.wh.getChain(params.from);
