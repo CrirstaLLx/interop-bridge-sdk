@@ -1,19 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// index.ts  –  Public API of the bridge-sdk npm package
+// index.ts  –  Public API of the interop-bridge-sdk package
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Core SDK
 export { BridgeSDK } from "./sdk";
+export type { SendTransferParams, SendTransferResult, HopRequest, MultiHopResult } from "./sdk";
 
-// Route selection
 export { RouteSelector } from "./RouteSelector";
 export type { RouteEstimate, RouteSelection } from "./RouteSelector";
 
-// Adapters
 export { AxelarAdapter }   from "./axelar/AxelarAdapter";
 export { WormholeAdapter } from "./wormhole/WormholeAdapter";
 
-// Types
 export type {
   IBridgeAdapter,
   TransferRequest,
@@ -21,6 +18,5 @@ export type {
   TransferResult,
 } from "./types";
 
-// Adapter-specific extras
 export type { AxelarExtra }   from "./axelar/AxelarAdapter";
 export type { WormholeExtra } from "./wormhole/WormholeAdapter";

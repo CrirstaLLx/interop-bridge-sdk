@@ -27,6 +27,7 @@ import {
   getChain,
   getAxelarUsdcAddress,
   HUB_CHAINS,
+  getUsdcAddress
 } from "./chains";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -282,10 +283,11 @@ export class RouteSelector {
     if (protocol === "wormhole") {
       const wFrom = toWormholeName(fromChain) ?? fromChain;
       const wTo   = toWormholeName(toChain)   ?? toChain;
+      const wormholeToken = getUsdcAddress(fromChain) ?? token;
       return {
         fromChain: wFrom,
         toChain:   wTo,
-        token,
+        token:     wormholeToken,
         amount,
         decimals,
         extra: {
