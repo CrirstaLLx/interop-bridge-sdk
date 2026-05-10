@@ -1,64 +1,28 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// AxelarAdapter.ts  –  Wraps AxelarBridge to implement IBridgeAdapter
-// ─────────────────────────────────────────────────────────────────────────────
+// AxelarAdapter.ts — wraps AxelarBridge to implement IBridgeAdapter
 
 import { ethers } from "ethers";
 import { AxelarBridge } from "./AxelarBridge";
 import { IBridgeAdapter, TransferRequest, FeeEstimate, TransferResult } from "../types";
 
-// ---------------------------------------------------------------------------
-// Axelar-specific extras (typed for convenience, passed via req.extra)
-// ---------------------------------------------------------------------------
+// Protocol-specific extras passed via req.extra.
+// When called through BridgeSDK.sendTransfer(), these are injected automatically
+// from chains.ts. Only needed manually when using AxelarAdapter directly.
 export interface AxelarExtra {
-  /** Address of your deployed Airdrop/Gateway contract on the source chain */
-  sourceContractAddress: string;
-
-  /** Address of your deployed contract on the destination chain */
-  destinationContractAddress: string;
-
-  /**
-   * Axelar token symbol (e.g. "aUSDC").
-   * Not the same as the ERC-20 address – Axelar uses its own symbol registry.
-   */
-  tokenSymbol: string;
-
-  /**
-   * Gas fee in native token to attach to the transaction (e.g. "0.01").
-   * Use AxelarBridge.estimateFee() first to get the right value.
-   */
-  gasFee: string;
-
-  /**
-   * aUSDC contract address on the source chain.
-   * Used for the approve() step before transfer.
-   * Automatically injected by RouteSelector from chains.ts — only needed
-   * when calling AxelarAdapter directly without RouteSelector.
-   */
-  tokenAddress?: string;
-
-  /**
-   * Optional list of recipient addresses on the destination chain.
-   * Defaults to the signer's own address (single recipient).
-   */
-  recipients?: string[];
+  sourceContractAddress:      string;  // your deployed Airdrop/Gateway contract on source chain
+  destinationContractAddress: string;  // your deployed contract on destination chain
+  tokenSymbol:                string;  // Axelar token symbol, e.g. "aUSDC" (not an ERC-20 address)
+  gasFee:                     string;  // native token fee to attach, e.g. "0.01" — get from estimateFee() first
+  tokenAddress?:              string;  // aUSDC contract address on source chain, used for approve()
+  recipients?:                string[]; // defaults to signer's own address
 }
 
-// ---------------------------------------------------------------------------
-// Adapter
-// ---------------------------------------------------------------------------
 export class AxelarAdapter implements IBridgeAdapter {
   readonly protocolName = "axelar";
 
-  // Memoized — created once on first access, reused for all subsequent calls.
-  // AxelarBridge is stateless so a single instance per signer is safe.
+  // Created lazily on first use; safe to reuse because AxelarBridge is stateless.
   private _bridge?: AxelarBridge;
 
-  /**
-   * @param signer  ethers.Signer connected to the source network
-   */
   constructor(private readonly signer: ethers.Signer) {}
-
-  // ── private helpers ────────────────────────────────────────────────────────
 
   private get bridge(): AxelarBridge {
     return (this._bridge ??= new AxelarBridge(this.signer));
@@ -78,8 +42,6 @@ export class AxelarAdapter implements IBridgeAdapter {
     if (!e.gasFee)                     throw new Error("[AxelarAdapter] extra.gasFee is missing");
     return e as AxelarExtra;
   }
-
-  // ── IBridgeAdapter ─────────────────────────────────────────────────────────
 
   async estimateFee(req: TransferRequest): Promise<FeeEstimate> {
     const extra = this.requireExtra(req);
@@ -104,9 +66,9 @@ export class AxelarAdapter implements IBridgeAdapter {
   async transfer(req: TransferRequest): Promise<TransferResult> {
     const extra = this.requireExtra(req);
 
-    // Step 1 – approve token spend if needed.
-    // tokenAddress comes from extra (auto-injected by RouteSelector from chains.ts,
-    // or supplied manually when calling AxelarAdapter directly).
+    // Approve token spend before the transfer.
+    // tokenAddress is injected from chains.ts by BridgeSDK; supply it manually
+    // when calling this adapter directly without going through BridgeSDK.
     const tokenAddress = extra.tokenAddress;
     if (tokenAddress) {
       await this.bridge.approve({
@@ -118,7 +80,6 @@ export class AxelarAdapter implements IBridgeAdapter {
       });
     }
 
-    // Step 2 – execute the cross-chain transfer
     const result = await this.bridge.transfer({
       sourceContractAddress:      extra.sourceContractAddress,
       destinationChain:           req.toChain,
@@ -133,7 +94,7 @@ export class AxelarAdapter implements IBridgeAdapter {
     return {
       protocol:      this.protocolName,
       sourceTx:      result.txHash,
-      destinationTx: null,   // Axelar relayer completes delivery automatically
+      destinationTx: null,   // relayer handles destination delivery
       mode:          "automatic",
       raw:           result,
     };

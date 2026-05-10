@@ -1,6 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// wormhole/WormholeAdapter.ts  –  Wraps WormholeBridge to implement IBridgeAdapter
-// ─────────────────────────────────────────────────────────────────────────────
+// WormholeAdapter.ts — wraps WormholeBridge to implement IBridgeAdapter
 
 import { ethers } from "ethers";
 import { Chain } from "@wormhole-foundation/sdk";
@@ -8,28 +6,19 @@ import { WormholeBridge, ExecutorEstimate } from "./WormholeBridge";
 import { IBridgeAdapter, TransferRequest, FeeEstimate, TransferResult } from "../types";
 import { getNativeToken } from "../chains";
 
-// ---------------------------------------------------------------------------
-// Wormhole-specific extras (passed via req.extra)
-// ---------------------------------------------------------------------------
+// Protocol-specific extras passed via req.extra.
 export interface WormholeExtra {
-  /**
-   * Which Wormhole protocol to use:
-   *
-   * "ExecutorTokenBridge"  — executor pays destination, precise fee estimate.
-   *                          DEFAULT — recommended for fee estimation.
-   *
-   * "TokenBridge"          — manual, user pays gas on both chains.
-   * "AutomaticTokenBridge" — relayer pays destination (mainnet only).
-   */
+  // Which sub-protocol to use:
+  //   "ExecutorTokenBridge"  — executor pays destination gas, precise fee estimate available.
+  //                            Default and recommended for sendTransfer().
+  //   "TokenBridge"          — manual relay, SDK completes the dest TX. Use this for intermediate
+  //                            hops in multiHop() — it's the only mode that waits synchronously.
+  //   "AutomaticTokenBridge" — relayer handles destination (mainnet only, cannot be a hop).
   protocol?: "TokenBridge" | "AutomaticTokenBridge" | "ExecutorTokenBridge";
 
-  /** Auto-attest token on destination if not wrapped yet. Default: true */
-  ensureWrapped?: boolean;
+  ensureWrapped?: boolean; // auto-attest token on destination if not yet wrapped (default: true)
 }
 
-// ---------------------------------------------------------------------------
-// Adapter
-// ---------------------------------------------------------------------------
 export class WormholeAdapter implements IBridgeAdapter {
   readonly protocolName = "wormhole";
 
@@ -43,8 +32,6 @@ export class WormholeAdapter implements IBridgeAdapter {
     this.provider   = provider;
     this.bridge     = new WormholeBridge();
   }
-
-  // ── private helpers ────────────────────────────────────────────────────────
 
   private async ensureInitialized(): Promise<void> {
     if (!this.initialized) {
@@ -61,10 +48,8 @@ export class WormholeAdapter implements IBridgeAdapter {
     return (req.extra ?? {}) as WormholeExtra;
   }
 
-  /**
-   * Estimate source chain gas cost (approve + initiateTransfer).
-   * approx 180k gas units.
-   */
+  // Source chain gas estimate for approve + initiateTransfer (~180k gas units).
+  // Returns "0" if no provider was supplied — fee comparison still works, just less precise.
   private async estimateSourceGas(chain: string): Promise<string> {
     if (!this.provider) return "0";
     try {
@@ -77,14 +62,11 @@ export class WormholeAdapter implements IBridgeAdapter {
     }
   }
 
-  // ── IBridgeAdapter ─────────────────────────────────────────────────────────
-
   async estimateFee(req: TransferRequest): Promise<FeeEstimate> {
     await this.ensureInitialized();
     const extra    = this.parseExtra(req);
     const protocol = extra.protocol ?? "ExecutorTokenBridge";
 
-    // ── ExecutorTokenBridge — precise relay fee from quote ────────────────
     if (protocol === "ExecutorTokenBridge") {
       const result = await this.bridge.estimate({
         from:          this.toWormholeChain(req.fromChain),
@@ -96,11 +78,10 @@ export class WormholeAdapter implements IBridgeAdapter {
         ensureWrapped: extra.ensureWrapped,
       }) as ExecutorEstimate;
 
-      // relayFeeWei = the "Amount Paid" shown on Wormholescan
-      // This is what the executor charges to deliver tokens on the destination chain.
-      // Formula from Wormhole Docs:
-      //   relayFee = baseFee + (gasLimit * dstGasPrice * srcPrice / dstPrice)
-      // The SDK computes this in quote.relayFee.amount — we use it directly.
+      // relayFeeWei = quote.relayFee.amount from the Wormhole SDK.
+      // This is what the executor charges to deliver tokens on the destination chain,
+      // and matches the "Amount Paid" field shown on Wormholescan.
+      // Formula: baseFee + (gasLimit × dstGasPrice × srcPrice / dstPrice)
       const relayFeeEth  = ethers.formatEther(result.relayFeeWei);
       const sourceGasEth = await this.estimateSourceGas(req.fromChain);
       const sourceToken  = getNativeToken(req.fromChain);
@@ -120,7 +101,6 @@ export class WormholeAdapter implements IBridgeAdapter {
           chain:  req.fromChain,
         },
         destinationCost: {
-          // relay fee = what executor charges = Amount Paid on Wormholescan
           amount: relayFeeEth,
           token:  sourceToken,
           chain:  req.toChain,
@@ -133,7 +113,6 @@ export class WormholeAdapter implements IBridgeAdapter {
       };
     }
 
-    // ── AutomaticTokenBridge ──────────────────────────────────────────────
     if (protocol === "AutomaticTokenBridge") {
       const quote = await this.bridge.estimate({
         from:          this.toWormholeChain(req.fromChain),
@@ -155,7 +134,7 @@ export class WormholeAdapter implements IBridgeAdapter {
       };
     }
 
-    // ── TokenBridge — no relay fee ────────────────────────────────────────
+    // TokenBridge has no relay fee — user pays destination gas themselves.
     return {
       protocol:  this.protocolName,
       fee:       "0",
@@ -180,7 +159,6 @@ export class WormholeAdapter implements IBridgeAdapter {
       ensureWrapped: extra.ensureWrapped,
     });
 
-    // Extract real EVM hashes (bridge tx first, approve tx last if present)
     const sourceTx      = this.normalizeTxList(result.sourceTx);
     const destinationTx = result.destinationTx
       ? this.normalizeTxList(result.destinationTx)
@@ -195,10 +173,9 @@ export class WormholeAdapter implements IBridgeAdapter {
     };
   }
 
-  /**
-   * Normalise tx list — WormholeBridge returns string[] of raw txids.
-   * Bridge tx is put first so sourceTx[0] always points to the trackable TX.
-   */
+  // WormholeBridge returns a string[] of raw txids. We put the bridge tx first
+  // so sourceTx[0] always points to the trackable transaction (the one that
+  // shows up on Wormholescan), regardless of how many txids were returned.
   private normalizeTxList(raw: unknown): string[] {
     if (!raw) return [];
     const arr = Array.isArray(raw) ? raw : [raw];
@@ -212,6 +189,8 @@ export class WormholeAdapter implements IBridgeAdapter {
     return hashes;
   }
 
+  // Wormhole occasionally returns txids with extra prefix bytes. If the clean
+  // hex is longer than 32 bytes, pull the last 32 bytes — that's the EVM hash.
   private extractEvmHash(txid: string): string {
     if (!txid) return txid;
     const clean = txid.startsWith("0x") ? txid : `0x${txid}`;

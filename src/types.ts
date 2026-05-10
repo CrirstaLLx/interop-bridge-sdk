@@ -1,6 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// types.ts  –  Shared contracts for the Bridge SDK
-// ─────────────────────────────────────────────────────────────────────────────
+// types.ts — shared contracts for the Bridge SDK
 
 export interface TransferRequest {
   fromChain: string;
@@ -21,26 +19,19 @@ export interface ChainCost {
 export interface FeeEstimate {
   protocol:  string;
 
-  /**
-   * Total relay fee as a human-readable string.
-   * For ExecutorTokenBridge: quote.relayFee.amount — the "Amount Paid" on Wormholescan.
-   * For Axelar: relay fee from Axelar SDK.
-   */
+  // Total relay fee as a human-readable string.
+  // ExecutorTokenBridge: quote.relayFee.amount — the "Amount Paid" on Wormholescan.
+  // Axelar: relay fee from the Axelar SDK.
   fee:       string;
   feeToken:  string;
 
-  /** Source chain gas cost (approve + initiateTransfer) */
-  sourceCost?:      ChainCost;
+  sourceCost?:      ChainCost;  // source chain gas (approve + initiateTransfer)
+  destinationCost?: ChainCost;  // relay fee paid to execute on destination
 
-  /** Destination relay fee — for ExecutorTokenBridge this equals relayFee from quote */
-  destinationCost?: ChainCost;
-
-  // 🔥 ExecutorTokenBridge specific — from estimateMsgValueAndGasLimit()
+  // ExecutorTokenBridge only — from estimateMsgValueAndGasLimit()
   executor?: {
-    /** msgValue from estimateMsgValueAndGasLimit() — paid to executor on source chain */
-    msgValue?: string;
-    /** gasLimit for destination execution */
-    gasLimit?: string;
+    msgValue?: string;  // paid to executor on source chain
+    gasLimit?: string;  // gas limit for destination execution
   };
 
   raw?: unknown;

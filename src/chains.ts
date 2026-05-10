@@ -1,69 +1,40 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// src/chains.ts  –  Single source of truth for all chain metadata
+// chains.ts — single source of truth for all chain metadata
 //
 // Canonical key: lowercase Axelar testnet name (e.g. "ethereum-sepolia").
-// Chains that only exist in Wormhole (no Axelar equivalent) use the
-// lowercase Wormhole name as the key (e.g. "injective", "sui", "aptos").
+// Chains that only exist in Wormhole use the lowercase Wormhole name as the
+// key (e.g. "injective", "sui", "aptos").
 //
-// Adding a new protocol later:
+// To add support for a new protocol:
 //   1. Add a field to ChainInfo (e.g. layerzeroName?: string)
-//   2. Add the chain entries below
+//   2. Add entries below
 //   3. Add a supportsLayerZero() helper at the bottom
-// ─────────────────────────────────────────────────────────────────────────────
 
 // ── Axelar contract addresses (testnet) ──────────────────────────────────────
-// These are YOUR deployed Airdrop/Gateway contracts per chain.
+// These are YOUR deployed Airdrop/Gateway contracts, one per chain.
 // Chains without a deployed contract have contractAddress: undefined —
-// the RouteSelector will skip Axelar for those chains until you deploy one.
+// BridgeSDK will skip Axelar for those routes until you deploy one.
 
 export interface AxelarContracts {
-  /** Your deployed Airdrop contract address on this chain */
   contractAddress?: string;
 }
 
-// ── Per-chain metadata ────────────────────────────────────────────────────────
-
 export interface ChainInfo {
-  /** Display name shown to users */
-  displayName: string;
-
-  /** Axelar testnet chain name (used in Axelar SDK calls). Undefined = not supported by Axelar. */
-  axelarName?: string;
-
-  /** Wormhole chain name (used in Wormhole SDK calls). Undefined = not supported by Wormhole. */
-  wormholeName?: string;
-
-  /** Native gas token symbol */
-  nativeToken: string;
-
-  /** Circle USDC contract address on this chain's testnet (used by Wormhole) */
-  usdcAddress?: string;
-
-  /**
-   * Axelar's aUSDC contract address on this chain.
-   * Different from Circle USDC — this is Axelar's own wrapped representation.
-   * Used as the `tokenAddress` in approve() and as reference for balance checks.
-   */
-  axelarUsdcAddress?: string;
-
-  /** aUSDC symbol used by Axelar (always "aUSDC" on testnet) */
-  axelarTokenSymbol?: string;
-
-  /** True for L2s — Axelar fee estimator needs this for executeData */
-  isL2?: boolean;
-
-  /** Your deployed Axelar Airdrop contract addresses */
-  axelarContracts?: AxelarContracts;
+  displayName:       string;
+  axelarName?:       string;   // Axelar SDK chain name; undefined = not on Axelar
+  wormholeName?:     string;   // Wormhole SDK chain name; undefined = not on Wormhole
+  nativeToken:       string;
+  usdcAddress?:      string;   // Circle USDC address (used by Wormhole)
+  axelarUsdcAddress?: string;  // Axelar's own aUSDC address — different from Circle USDC
+  axelarTokenSymbol?: string;  // always "aUSDC" on testnet
+  isL2?:             boolean;  // some Axelar fee paths differ for L2s
+  axelarContracts?:  AxelarContracts;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Chain registry
-// Key = canonical lowercase identifier (prefer Axelar testnet name where possible)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Chain registry ────────────────────────────────────────────────────────────
+// Key = canonical lowercase identifier (Axelar testnet name where available)
 
 export const CHAINS: Record<string, ChainInfo> = {
 
-  // ── Ethereum / Sepolia ────────────────────────────────────────────────────
   "ethereum-sepolia": {
     displayName:        "Ethereum Sepolia",
     axelarName:         "ethereum-sepolia",
@@ -77,7 +48,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     },
   },
 
-  // ── Optimism Sepolia ──────────────────────────────────────────────────────
   "optimism-sepolia": {
     displayName:        "Optimism Sepolia",
     axelarName:         "optimism-sepolia",
@@ -92,7 +62,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     },
   },
 
-  // ── Arbitrum Sepolia ──────────────────────────────────────────────────────
   "arbitrum-sepolia": {
     displayName:        "Arbitrum Sepolia",
     axelarName:         "arbitrum-sepolia",
@@ -107,7 +76,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     },
   },
 
-  // ── Base Sepolia ──────────────────────────────────────────────────────────
   "base-sepolia": {
     displayName:        "Base Sepolia",
     axelarName:         "base-sepolia",
@@ -122,7 +90,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     },
   },
 
-  // ── Polygon Sepolia ───────────────────────────────────────────────────────
   "polygon-sepolia": {
     displayName:        "Polygon Sepolia",
     axelarName:         "polygon-sepolia",
@@ -134,10 +101,9 @@ export const CHAINS: Record<string, ChainInfo> = {
     // axelarContracts: { contractAddress: undefined },  // not deployed yet
   },
 
-  // ── Avalanche Fuji ────────────────────────────────────────────────────────
   "avalanche": {
     displayName:        "Avalanche Fuji",
-    axelarName:         "Avalanche",            // Axelar uses PascalCase for this one
+    axelarName:         "Avalanche",   // Axelar uses PascalCase for this one
     wormholeName:       "Avalanche",
     nativeToken:        "AVAX",
     usdcAddress:        "0x5425890298aed601595a70AB815c96711a31Bc65",
@@ -145,7 +111,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── BNB Chain ─────────────────────────────────────────────────────────────
   "binance": {
     displayName:        "BNB Chain",
     axelarName:         "binance",
@@ -155,17 +120,15 @@ export const CHAINS: Record<string, ChainInfo> = {
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Fantom ────────────────────────────────────────────────────────────────
   "fantom": {
     displayName:        "Fantom",
-    axelarName:         "Fantom",              // Axelar PascalCase
+    axelarName:         "Fantom",      // Axelar PascalCase
     wormholeName:       "Fantom",
     nativeToken:        "FTM",
     axelarUsdcAddress:  "0x75Cc4fDf1ee3E781C1A3Ee9151D5c6Ce34Cf5C61",
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Celo Sepolia ──────────────────────────────────────────────────────────
   "celo-sepolia": {
     displayName:        "Celo Alfajores",
     axelarName:         "celo-sepolia",
@@ -176,7 +139,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Blast Sepolia ─────────────────────────────────────────────────────────
   "blast-sepolia": {
     displayName:        "Blast Sepolia",
     axelarName:         "blast-sepolia",
@@ -187,7 +149,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Scroll ────────────────────────────────────────────────────────────────
   "scroll": {
     displayName:        "Scroll",
     axelarName:         "scroll",
@@ -198,7 +159,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Mantle Sepolia ────────────────────────────────────────────────────────
   "mantle-sepolia": {
     displayName:        "Mantle Sepolia",
     axelarName:         "mantle-sepolia",
@@ -209,7 +169,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Linea Sepolia ─────────────────────────────────────────────────────────
   "linea-sepolia": {
     displayName:        "Linea Sepolia",
     axelarName:         "linea-sepolia",
@@ -221,18 +180,17 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Moonbeam ──────────────────────────────────────────────────────────────
   "moonbeam": {
     displayName:        "Moonbase Alpha",
-    axelarName:         "Moonbeam",            // Axelar PascalCase
+    axelarName:         "Moonbeam",    // Axelar PascalCase
     wormholeName:       "Moonbeam",
     nativeToken:        "GLMR",
     axelarUsdcAddress:  "0xD1633F7Fb3d716643125d6415d4177bC36b7186b",
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Filecoin Calibration ──────────────────────────────────────────────────
-  // Axelar only — Wormhole does not support Filecoin
+  // Axelar-only chains (no Wormhole support)
+
   "filecoin-2": {
     displayName:        "Filecoin Calibration",
     axelarName:         "filecoin-2",
@@ -241,8 +199,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Fraxtal ───────────────────────────────────────────────────────────────
-  // Axelar only
   "fraxtal": {
     displayName:        "Fraxtal",
     axelarName:         "fraxtal",
@@ -252,8 +208,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Immutable ─────────────────────────────────────────────────────────────
-  // Axelar only
   "immutable": {
     displayName:        "Immutable zkEVM",
     axelarName:         "immutable",
@@ -263,8 +217,6 @@ export const CHAINS: Record<string, ChainInfo> = {
     isL2:               true,
   },
 
-  // ── Kava ──────────────────────────────────────────────────────────────────
-  // Axelar only
   "kava": {
     displayName:        "Kava",
     axelarName:         "kava",
@@ -273,43 +225,14 @@ export const CHAINS: Record<string, ChainInfo> = {
     axelarTokenSymbol:  "aUSDC",
   },
 
-  // ── Wormhole-only chains ──────────────────────────────────────────────────
+  // Wormhole-only chains
 
-  "injective": {
-    displayName:  "Injective",
-    wormholeName: "Injective",
-    nativeToken:  "INJ",
-  },
-
-  "sui": {
-    displayName:  "Sui",
-    wormholeName: "Sui",
-    nativeToken:  "SUI",
-  },
-
-  "aptos": {
-    displayName:  "Aptos",
-    wormholeName: "Aptos",
-    nativeToken:  "APT",
-  },
-
-  "sei": {
-    displayName:  "Sei",
-    wormholeName: "Sei",
-    nativeToken:  "SEI",
-  },
-
-  "kaia": {
-    displayName:  "Kaia",
-    wormholeName: "Kaia",
-    nativeToken:  "KAIA",
-  },
-
-  "xlayer": {
-    displayName:  "X Layer",
-    wormholeName: "Xlayer",
-    nativeToken:  "OKB",
-  },
+  "injective": { displayName: "Injective", wormholeName: "Injective", nativeToken: "INJ" },
+  "sui":       { displayName: "Sui",       wormholeName: "Sui",       nativeToken: "SUI" },
+  "aptos":     { displayName: "Aptos",     wormholeName: "Aptos",     nativeToken: "APT" },
+  "sei":       { displayName: "Sei",       wormholeName: "Sei",       nativeToken: "SEI" },
+  "kaia":      { displayName: "Kaia",      wormholeName: "Kaia",      nativeToken: "KAIA" },
+  "xlayer":    { displayName: "X Layer",   wormholeName: "Xlayer",    nativeToken: "OKB" },
 
   "blast": {
     displayName:  "Blast",
@@ -327,80 +250,65 @@ export const CHAINS: Record<string, ChainInfo> = {
   },
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lookup helpers
+// ── Lookup helpers ────────────────────────────────────────────────────────────
 // All accept any casing — normalize to lowercase before lookup.
-// ─────────────────────────────────────────────────────────────────────────────
 
 function normalize(chain: string): string {
   return chain.toLowerCase();
 }
 
-/** Full ChainInfo or undefined if unknown */
 export function getChain(chain: string): ChainInfo | undefined {
   return CHAINS[normalize(chain)];
 }
 
-/** Axelar SDK chain name (e.g. "ethereum-sepolia", "Avalanche") */
 export function toAxelarName(chain: string): string | undefined {
   return CHAINS[normalize(chain)]?.axelarName;
 }
 
-/** Wormhole SDK chain name (e.g. "Sepolia", "ArbitrumSepolia") */
 export function toWormholeName(chain: string): string | undefined {
   return CHAINS[normalize(chain)]?.wormholeName;
 }
 
-/** Native gas token for the chain */
 export function getNativeToken(chain: string): string {
   return CHAINS[normalize(chain)]?.nativeToken ?? "ETH";
 }
 
-/** USDC address on testnet, or undefined (Circle USDC — used by Wormhole) */
+/** Circle USDC address on testnet (used by Wormhole) */
 export function getUsdcAddress(chain: string): string | undefined {
   return CHAINS[normalize(chain)]?.usdcAddress;
 }
 
-/**
- * Axelar aUSDC contract address on this chain.
- * Used as `tokenAddress` in approve() before an Axelar transfer.
- * Different from Circle USDC — Axelar has its own wrapped representation.
- */
+/** Axelar aUSDC address — used as tokenAddress in approve() before Axelar transfers.
+ *  Not the same as Circle USDC; Axelar has its own wrapped representation per chain. */
 export function getAxelarUsdcAddress(chain: string): string | undefined {
   return CHAINS[normalize(chain)]?.axelarUsdcAddress;
 }
 
-/** True if chain is supported by Axelar AND has a deployed contract */
+/** True if chain is on Axelar AND has a deployed contract (required for transfers) */
 export function supportsAxelarWithContract(chain: string): boolean {
   const info = CHAINS[normalize(chain)];
   return !!info?.axelarName && !!info?.axelarContracts?.contractAddress;
 }
 
-/** True if chain is supported by Axelar (regardless of contract deployment) */
 export function supportsAxelar(chain: string): boolean {
   return !!CHAINS[normalize(chain)]?.axelarName;
 }
 
-/** True if chain is supported by Wormhole WTT */
 export function supportsWormhole(chain: string): boolean {
   return !!CHAINS[normalize(chain)]?.wormholeName;
 }
 
-/** True if both chains are reachable via Axelar */
 export function axelarRouteExists(from: string, to: string): boolean {
   return supportsAxelar(from) && supportsAxelar(to);
 }
 
-/** True if both chains are reachable via Wormhole */
 export function wormholeRouteExists(from: string, to: string): boolean {
   return supportsWormhole(from) && supportsWormhole(to);
 }
 
-/**
- * Canonical list of "hub" chains that both protocols support.
- * Used by RouteSelector for multi-hop path finding.
- * Ordered by liquidity / reliability preference.
- */
+// Hub chains are chains supported by both protocols.
+// Used by BridgeSDK.findMultiHopPath() when no single protocol covers a route.
+// Order matters — first match wins, so put most liquid/reliable hubs first.
 export const HUB_CHAINS: string[] = [
   "ethereum-sepolia",
   "avalanche",

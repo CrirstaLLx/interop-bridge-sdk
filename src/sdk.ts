@@ -1,6 +1,4 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// sdk.ts  –  BridgeSDK  –  The single entry-point of the package
-// ─────────────────────────────────────────────────────────────────────────────
+// sdk.ts — BridgeSDK, the single entry-point of the package
 
 import { IBridgeAdapter, TransferRequest, FeeEstimate, TransferResult } from "./types";
 import { AxelarGMPRecoveryAPI, Environment } from "@axelar-network/axelarjs-sdk";
@@ -18,41 +16,23 @@ export interface MultiHopResult {
   success: boolean;
 }
 
-/**
- * Parameters for the high-level sendTransfer() function.
- * The user only needs to specify what they want to transfer — the SDK
- * figures out which protocol to use and how to route it.
- */
+// sendTransfer() params — caller only needs to say what to move and where.
+// The SDK works out which protocol(s) to use.
 export interface SendTransferParams {
-  /** Source chain canonical key (e.g. "ethereum-sepolia") */
-  fromChain: string;
-  /** Destination chain canonical key (e.g. "optimism-sepolia") */
-  toChain: string;
-  /** Token address on the source chain */
-  token: string;
-  /** Human-readable amount (e.g. "1.0") */
-  amount: string;
-  /** Token decimals */
-  decimals: number;
-  /** Optional: protocol-specific extras passed through to the adapter */
-  extra?: Record<string, unknown>;
-  /** Optional: ethers provider used for Wormhole gas estimation */
-  provider?: ethers.Provider;
+  fromChain: string;   // canonical key, e.g. "ethereum-sepolia"
+  toChain:   string;   // canonical key, e.g. "optimism-sepolia"
+  token:     string;   // token contract address on the source chain
+  amount:    string;   // human-readable, e.g. "1.0"
+  decimals:  number;
+  extra?:    Record<string, unknown>;  // passed through to the adapter unchanged
+  provider?: ethers.Provider;          // only needed for Wormhole gas estimation
 }
 
-/**
- * Result returned by sendTransfer().
- */
 export interface SendTransferResult {
-  /** Which protocol(s) were used */
-  protocol: string;
-  /** "direct" = single protocol, "multi-hop" = two protocols via hub chain */
-  routeType: "direct" | "multi-hop";
-  /** For direct: single transfer result. For multi-hop: array of hop results. */
-  result: TransferResult | MultiHopResult;
-  /** The fee estimate used to select the protocol */
-  feeEstimate?: FeeEstimate | null;
-  /** Human-readable description of the chosen route */
+  protocol:         string;
+  routeType:        "direct" | "multi-hop";
+  result:           TransferResult | MultiHopResult;
+  feeEstimate?:     FeeEstimate | null;
   routeDescription: string;
 }
 
@@ -94,56 +74,27 @@ export class BridgeSDK {
 
   // ── High-level transfer ────────────────────────────────────────────────────
 
-  /**
-   * Send a cross-chain token transfer with automatic protocol selection.
-   *
-   * This is the main entry point intended for end users of the SDK.
-   * The caller specifies source chain, destination chain, token and amount.
-   * The SDK handles everything else:
-   *
-   *   1. Checks which registered protocols support the route directly.
-   *   2. If multiple protocols support it — estimates fees and picks cheapest.
-   *   3. If no single protocol covers the route — finds a 2-hop path via
-   *      a shared hub chain and executes both hops in sequence.
-   *   4. Executes the transfer and returns the result.
-   *
-   * Example:
-   *
-   *   // Automatic: SDK picks Axelar or Wormhole, whichever is cheaper
-   *   const result = await sdk.sendTransfer({
-   *     fromChain: "ethereum-sepolia",
-   *     toChain:   "optimism-sepolia",
-   *     token:     "0xUSDC...",
-   *     amount:    "1.0",
-   *     decimals:  6,
-   *   });
-   *
-   *   // SDK also handles chains only reachable via multi-hop:
-   *   const result = await sdk.sendTransfer({
-   *     fromChain: "ethereum-sepolia",
-   *     toChain:   "injective",   // Wormhole-only chain
-   *     token:     "0xUSDC...",
-   *     amount:    "1.0",
-   *     decimals:  6,
-   *   });
-   */
+  // The smart entry-point. Caller specifies source/dest/token/amount; SDK handles routing:
+  //
+  //   1. Ask each registered adapter whether it can handle the route.
+  //   2. If multiple can — estimate fees and pick the cheapest.
+  //   3. If none can — look for a 2-hop path through a shared hub chain.
+  //   4. Execute and return.
   async sendTransfer(params: SendTransferParams): Promise<SendTransferResult> {
     const { fromChain, toChain, token, amount, decimals, extra, provider } = params;
     const protocols = this.protocols();
 
     console.log(`\n[BridgeSDK] sendTransfer: ${fromChain} → ${toChain}`);
 
-    // ── Step 1: Find which protocols support this route directly ──────────
     const supported = this.findSupportedProtocols(fromChain, toChain);
     console.log(`[BridgeSDK] Supported directly: ${supported.length > 0 ? supported.join(", ") : "none"}`);
 
-    // ── Step 2: Direct route ──────────────────────────────────────────────
     if (supported.length > 0) {
       const estimates = await this.estimateFees(
         supported, fromChain, toChain, token, amount, decimals, extra
       );
 
-      const best = estimates[0] ?? null; // already sorted cheapest first
+      const best = estimates[0] ?? null; // sorted cheapest-first by estimateFees()
 
       if (best) {
         const fee = best.estimate.sourceCost
@@ -170,7 +121,7 @@ export class BridgeSDK {
       }
     }
 
-    // ── Step 3: Multi-hop fallback ────────────────────────────────────────
+    // No single protocol covers both chains — try a 2-hop path via a hub.
     console.log(`[BridgeSDK] No direct route — searching for multi-hop path...`);
 
     const path = this.findMultiHopPath(protocols, fromChain, toChain);
@@ -251,6 +202,8 @@ export class BridgeSDK {
     try {
       const source = parseFloat(estimate.sourceCost?.amount ?? estimate.fee ?? "0");
       const dest   = parseFloat(estimate.destinationCost?.amount ?? "0");
+      // Only add destination cost if both sides are denominated in the same token.
+      // Cross-token addition would produce a meaningless number.
       const same   = !estimate.destinationCost ||
         estimate.sourceCost?.token === estimate.destinationCost?.token;
       return same ? source + dest : source;
@@ -266,6 +219,8 @@ export class BridgeSDK {
   ): { hub: string; hop1: { protocol: string }; hop2: { protocol: string } } | null {
     const { HUB_CHAINS } = require("./chains");
 
+    // Try each hub in preference order (defined in chains.ts).
+    // First valid combination wins — hop1 and hop2 can be different protocols.
     for (const hub of HUB_CHAINS as string[]) {
       if (hub === fromChain || hub === toChain) continue;
       for (const p1 of protocols) {
@@ -279,12 +234,9 @@ export class BridgeSDK {
     return null;
   }
 
-  /**
-   * Build a protocol-specific TransferRequest with correct chain names.
-   * Axelar uses its own chain names and aUSDC addresses from chains.ts.
-   * Wormhole uses Wormhole chain names and Circle USDC addresses.
-   * Throws if the protocol does not support the given chains.
-   */
+  // Translate canonical chain keys into protocol-specific names and inject
+  // the right token addresses and contract addresses from chains.ts.
+  // Axelar uses aUSDC with its own symbol/address; Wormhole uses Circle USDC.
   private buildRequest(
     protocol:  string,
     fromChain: string,
@@ -352,6 +304,8 @@ export class BridgeSDK {
 
   // ── Fee helpers ────────────────────────────────────────────────────────────
 
+  // Runs estimateFee() on all registered adapters in parallel.
+  // Useful for showing users a cost comparison before they commit to a transfer.
   async estimateAll(
     req: TransferRequest
   ): Promise<Array<{ protocol: string; estimate: FeeEstimate | null; error?: string }>> {
@@ -372,6 +326,10 @@ export class BridgeSDK {
 
   // ── Axelar status polling ──────────────────────────────────────────────────
 
+  // Axelar transfers are async — the source TX lands immediately but the relayer
+  // needs time to execute on the destination. This polls Axelarscan until
+  // "destination_executed" or the timeout fires. Used between hops in multiHop()
+  // and also exposed for manual polling after a standalone transfer.
   async waitForAxelar(
     txHash:    string,
     timeoutMs  = 10 * 60 * 1000,
@@ -404,6 +362,12 @@ export class BridgeSDK {
 
   // ── Multi-hop transfer ─────────────────────────────────────────────────────
 
+  // Executes hops sequentially, waiting for each to settle before starting the next.
+  //
+  // Wait strategy per protocol:
+  //   Wormhole TokenBridge    — synchronous, SDK completes the dest TX, no extra wait needed
+  //   Axelar                  — async relay, poll until "destination_executed"
+  //   Wormhole AutomaticBridge— cannot be an intermediate hop, relayer timing is unreliable
   async multiHop(
     hops: HopRequest[],
     options: { axelarTimeoutMs?: number; axelarIntervalMs?: number } = {}
@@ -437,7 +401,7 @@ export class BridgeSDK {
       }
     }
 
-    console.log("\n[BridgeSDK] 🎉 All hops complete!");
+    console.log("\n[BridgeSDK] All hops complete!");
     return { hops: results, success: true };
   }
 }
