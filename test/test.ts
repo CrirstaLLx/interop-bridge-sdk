@@ -12,7 +12,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY!;
 const SEPOLIA_RPC = "https://ethereum-sepolia-rpc.publicnode.com";
 
 const USDC_SEPOLIA  = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238";
-const USDC_POLYGON  = "0x2dDd8bB63f18cFB2C20a1E8f6E153F2dD6F7F9Da"; // wrapped USDC on Polygon Sepolia, bridged via Wormhole TokenBridge from Sepolia USDC
+const USDC_POLYGON  = "0x2dDd8bB63f18cFB2C20a1E8f6E153F2dD6F7F9Da"; // wrapped USDC on Polygon Sepolia, bridged via Wormhole TokenBridge from Sepolia USDC 
 const AUSDC_SEPOLIA = "0x254d06f33bDc5b8ee05b2ea472107E300226659A";
 
 const CONTRACT_SEPOLIA  = "0xAe809E3bbC80090920aAb24675702932619DCf2e"; // change to your deployed contract address
